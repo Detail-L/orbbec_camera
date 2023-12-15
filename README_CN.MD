@@ -28,7 +28,7 @@ mkdir -p ~/ros_ws/src
 
 ```bash
 cd ~/ros_ws/src/
-git clone https://github.com/OrbbecDeveloper/OrbbecSDK_ROS1.git
+git clone https://github.com/orbbec/OrbbecSDK_ROS1.git
 ```
 
 或者您可以从[Orbbec 开发者社区](https://developer.orbbec.com.cn/download.html)下载
@@ -178,6 +178,11 @@ rosservice call  /camera/toggle_depth "{data: true}"
 ```bash
 rosservice call /camera/save_images "{}"
 ```
+- 保存点云。
+
+```bash
+rosservice call /camera/save_point_cloud "{}"
+```
 
 注意：图像保存在 `~/.ros/image` 下，仅在传感器打开时才可用
 
@@ -250,10 +255,32 @@ rosservice call /camera/save_images "{}"
 
 ### 多相机
 
-- 首先，您需要枚举相机的序列号。将相机连接并在终端中运行以下命令:
+- 首先，您需要枚举相机的序列号。将相机连接并在终端中运行以下命令,请注意运行之前确保没有相机被打开:
 
 ```bash
   rosrun orbbec_camera list_devices_node 
+```
+
+或者你可以使用以下脚本来获取序列号和usb端口号，把以下脚本保存为`list_ob_devices.sh`，`chmod +x list_ob_devices.sh`
+，然后运行`./list_ob_devices.sh`。
+
+```bash
+#!/bin/bash
+
+VID="2bc5"
+
+for dev in /sys/bus/usb/devices/*; do
+  if [ -e "$dev/idVendor" ]; then
+    vid=$(cat "$dev/idVendor")
+    if [ "$vid" == "${VID}" ]; then
+      port=$(basename $dev)
+      product=$(cat "$dev/product" 2>/dev/null) # product name
+      serial=$(cat "$dev/serial" 2>/dev/null) # serial number
+      echo "Found Orbbec device $product, usb port $port, serial number $serial"
+    fi
+  fi
+done
+
 ```
 
 - 将 `device_num` 参数设置为您拥有的相机数量。
@@ -299,6 +326,18 @@ rosservice call /camera/save_images "{}"
 roslaunch orbbec_camera multi_camera.launch
 ```
 
+## 调用硬件解码JPEG
+
+### rockchip 和 Amlogic
+
+依赖  `rockchip-mpp-dev` 和 `rockchip-rga-dev`, 不是所有的系统都有这两个包， 名字可能不一样， 请自行搜索。
+打开 `CMakeLists.txt` 把 `USE_RK_HW_DECODER` 设置为 `ON`。
+
+### Nvidia Jetson
+
+依赖 : `jetson_multimedia_api`, `libyuv`。
+打开 `CMakeLists.txt` 把 `USE_NV_HW_DECODER` 设置为 `ON`。
+
 ## 启动参数
 
 以下是可用的启动参数:
@@ -319,86 +358,104 @@ roslaunch orbbec_camera multi_camera.launch
 - `log_level`: `OrbbecSDK` 的日志级别，可选值为 `none`、`info`、`debug`、`warn` 和 `fatal`。日志文件可以在 ROS
   运行时目录中找到，其默认位置为`~/.ros/Log`。
 - `usb_port` : USB端口号，当使用多个相机时，这是必需的。
+- `enable_accel`: 是否启用加速度计。
+- `accel_rate` : 加速度计的频率， 可选值为`1.5625hz`,`3.125hz`,`6.25hz`,`12.5hz`,`25hz`,`50hz`,
+  `100hz`,`200hz`,`500hz`,`1khz`,`2khz`,`4khz`,`8khz`,`16khz`,`32khz`。具体的值取决于当前的相机型号。
+- `accel_range` : 加速度计的量程, 可选值为`2g`,`4g`,`8g`,`16g`。具体的值取决于当前的相机型号。
+- `enable_gyro` : 是否启用陀螺仪。
+- `gyro_rate` : 陀螺仪的频率, 可选值为`1.5625hz`,`3.125hz`,`6.25hz`,`12.5hz`,`25hz`,`50hz`,
+  `100hz`,`200hz`,`500hz`,`1khz`,`2khz`,`4khz`,`8khz`,`16khz`,`32khz`。具体的值取决于当前的相机型号。
+- `gyro_range` : 陀螺仪的量程, 可选值为`16dps`,`31dps`,`62dps`,`125dps`,`250dps`,`500dps`,`1000dps`,`2000dps`
+  。具体的值取决于当前的相机型号。
+- `enumerate_net_device` : 是否开启枚举网络设备的功能，true为开启，false为关闭，仅Femto mega和Gemini 2 XL设备支持。
+  当通过网络方式访问以上设备时，需提前配置好设备的IP地址，使能开关需要配置成true。
+
+## 深度模式切换：
+- 启动相机前,可通过配置对应相继的xxx.launch的深度模式(depth_work_mode)支持。
+- 深度模式切换支持的相机:Gemini 2,Gemini 2 L,Gemini 2 XL。
+- xxx.launch默认深度模式配置为相机默认配置,如果需要修改可根据需要切换相应深度模式。
+- 具体相机深度模式支持类型可查看深度模式的注释。
+
+```XML
+  <!-- Depth work mode support is as follows： -->
+  <!-- Unbinned Dense Default -->
+  <!-- Unbinned Sparse Default -->
+  <!-- Binned Sparse Default -->
+  <arg name="depth_work_mode" default=""/>
+```
+
+- 深度工作模式查看:
+
+```bash
+rosrun orbbec_camera list_depth_work_mode_node
+```
+## 深度NFOV和WFOV模式配置
+对于Femto Mega和Femto Bolt设备，深度NFOV和WFOV模式通过在launch文件中配置Depth和IR的分辨率实现。
+在launch文件中，`depth_width`, `depth_height`、'ir_width'、‘ir_height’为深度流的分辨率和IR流的分辨率。
+IR的分辨率和帧率必须和深度保持一致。不同模式和分辨率对应关系如下:
+- NFoV unbinned：640 x 576。
+- NFoV binned：320 x 288。
+- WFoV unbinned：1024 x1024。
+- WFoV binned：512 x 512。
+
+## 查看相机支持那些Profile
+
+  ```bash
+  rosrun orbbec_camera list_camera_profile_mode_node
+  ```
 
 ## 启动文件
 
-| product serials     | launch file           |
-|---------------------|-----------------------|
-| astra+              | astra_adv.launch      |
-| astra               | astra.launch          |
-| astra2              | astra2.launch         |
-| astra mini          | astra_mini.launch     |
-| astra mini pro      | astra_mini_pro.launch |
-| astra pro           | astra_pro.launch      |
-| astra stereo s      | stereo_s_u3.launch    |
-| dabai               | dabai.launch          |
-| dabai d1            | dabai_d1.launch       |
-| dabai dcw           | dabai_dcw.launch      |
-| dabai dw            | dabai_dw.launch       |
-| dabai pro           | dabai_pro.launch      |
-| deeya               | deeya.launch          |
-| femto               | femto.launch          |
-| femto mega          | femto_mega.launch     |
-| femto w             | femto_w.launch        |
-| gemini              | gemini.launch         |
-| gemini              | gemini.launch         |
-| gemini2 / dabai DCL | gemini2.launch        |
-| gemini2L            | gemini2L.launch       |
-| gemini e            | gemini_e.launch       |
-| gemini e lite       | gemini_e_lite.launch  |
+| product serials                           | launch file          |
+|-------------------------------------------|----------------------|
+| astra+                                    | astra_adv.launch     |
+| astra/astra mini/astra mini pro/astra pro | astra.launch         |
+| astra mini s pro                          | astra.launch         |
+| astra2                                    | astra2.launch        |
+| astra stereo s                            | stereo_s_u3.launch   |
+| dabai                                     | dabai.launch         |
+| dabai d1                                  | dabai_d1.launch      |
+| dabai dcw                                 | dabai_dcw.launch     |
+| dabai dw                                  | dabai_dw.launch      |
+| dabai pro                                 | dabai_pro.launch     |
+| deeya                                     | deeya.launch         |
+| femto / femto w                           | femto.launch         |
+| femto mega                                | femto_mega.launch    |
+| femto bolt                                | femto_bolt.launch    |
+| gemini                                    | gemini.launch        |
+| gemini                                    | gemini.launch        |
+| gemini2 / dabai DCL                       | gemini2.launch       |
+| gemini2L                                  | gemini2L.launch      |
+| gemini e                                  | gemini_e.launch      |
+| gemini e lite                             | gemini_e_lite.launch |
 
 实际上所有启动文件几乎都是相同的，只是有的相机默认参数不同，请根据自己的相机选择对应的启动文件，并根据你的需要调整。
 
 ## 已经支持的硬件产品列表
 
-| **SDK version** | **products list** | **firmware version**        |
-|-----------------|-------------------|-----------------------------|
-| v1.6.2          | Astra2            | 2.8.20                      |
-|                 | Gemini2 L         | 1.4.32                      |
-|                 | Gemini2           | 1.4.60                      |
-|                 | FemtoMega         | 1.1.7                       |
-|                 | Astra+            | 1.0.22/1.0.21/1.0.20/1.0.19 |
-|                 | Femto             | 1.6.7                       |
-|                 | Femto W           | 1.1.8                       |
-|                 | Dabai             | 2436                        |
-|                 | Dabai DCW         | 2460                        |
-|                 | Dabai DW          | 2606                        |
-|                 | Astra Mini Pro    | 1007                        |
-|                 | Astra Pro Plus    | 2513                        |
-|                 | A1 Pro            | 3057                        |
-|                 | Gemini E          | 3460                        |
-|                 | Gemini E Lite     | 3606                        |
-|                 | Gemini            | 3.0.18                      |
-| v1.5.7          | Gemini2           | 1.4.60                      |
-|                 | FemtoMega         | 1.1.5                       |
-|                 | Astra+            | 1.0.22/1.0.21/1.0.20/1.0.19 |
-|                 | Femto             | 1.6.7                       |
-|                 | Femto W           | 1.1.8                       |
-|                 | Dabai             | 2436                        |
-|                 | Dabai DCW         | 2460                        |
-|                 | Dabai DW          | 2606                        |
-|                 | Astra Mini Pro    | 1007                        |
-|                 | Astra Pro Plus    | 2513                        |
-|                 | A1 Pro            | 3057                        |
-|                 | Gemini E          | 3460                        |
-|                 | Gemini E Lite     | 3606                        |
-|                 | Gemini            | 3.0.18                      |
-| v1.4.3          | Astra+            | 1.0.22/1.0.21/1.0.20/1.0.19 |
-|                 | Femto             | 1.6.7                       |
-|                 | *Femto W          | 1.1.3                       |
-|                 | Dabai             | 2436                        |
-|                 | Dabai DCW         | 2460                        |
-|                 | Dabai DW          | 2606                        |
-|                 | Astra Mini Pro    | 1007                        |
-|                 | Astra Pro Plus    | 2513                        |
-|                 | Gemini            | 3.0.18                      |
-| v1.3.1          | Astra+            | 1.0.21/1.0.20/1.0.19        |
-|                 | Femto             | 1.6.7                       |
-| v1.2.8          | Astra+            | 1.0.20                      |
-|                 | Femto             | 1.6.7                       |
-| v1.1.6          | Astra+            | 1.0.20/1.0.19               |
-|                 | *Femto            | 1.5.1                       |
-| v1.0.2          | Astra+            | 1.0.19                      |
+| **SDK version** | **products list** | **firmware version**                      |
+|-----------------|-------------------|-------------------------------------------|
+| v1.8.3          | Gemini 2 XL       | Obox: V1.2.5  VL:1.4.54                   |
+|                 | Astra 2           | 2.8.20                                    |
+|                 | Gemini 2 L        | 1.4.32                                    |
+|                 | Gemini 2          | 1.4.60 /1.4.76                            |
+|                 | Femto Mega        | 1.1.7  (window10、ubuntu20.04、ubuntu22.04) |
+|                 | Astra+            | 1.0.22/1.0.21/1.0.20/1.0.19               |
+|                 | Femto             | 1.6.7                                     |
+|                 | Femto W           | 1.1.8                                     |
+|                 | Femto Bolt        | 1.0.6 (unsupported ARNM32)                |
+|                 | DaBai             | 2436                                      |
+|                 | DaBai DCW         | 2460                                      |
+|                 | DaBai DW          | 2606                                      |
+|                 | Astra Mini Pro    | 1007                                      |
+|                 | Gemini E          | 3460                                      |
+|                 | Gemini E Lite     | 3606                                      |
+|                 | Gemini            | 3.0.18                                    |
+|                 | Astra Mini S Pro  | 1.0.05                                    |
+
+## 使用Nodelet
+
+对于需要使用Nodelet的用户，请参考`gemini2_nodelet.launch`
 
 ## 常见问题
 

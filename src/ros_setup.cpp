@@ -1,3 +1,19 @@
+/*******************************************************************************
+ * Copyright (c) 2023 Orbbec 3D Technology, Inc
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *******************************************************************************/
+
 #include "orbbec_camera/ob_camera_node.h"
 #include "orbbec_camera/utils.h"
 
@@ -25,14 +41,14 @@ void OBCameraNode::setupConfig() {
   encoding_[INFRA0] = sensor_msgs::image_encodings::MONO16;
   format_str_[INFRA0] = "Y16";
 
-  stream_name_[INFRA1] = "ir1";
+  stream_name_[INFRA1] = "left_ir";
   unit_step_size_[INFRA1] = sizeof(uint16_t);
   format_[INFRA1] = OB_FORMAT_Y16;
   image_format_[INFRA1] = CV_16UC1;
   encoding_[INFRA1] = sensor_msgs::image_encodings::MONO16;
   format_str_[INFRA1] = "Y16";
 
-  stream_name_[INFRA2] = "ir2";
+  stream_name_[INFRA2] = "right_ir";
   unit_step_size_[INFRA2] = sizeof(uint16_t);
   format_[INFRA2] = OB_FORMAT_Y16;
   image_format_[INFRA2] = CV_16UC1;
@@ -48,10 +64,12 @@ void OBCameraNode::setupDevices() {
     for (size_t j = 0; j < profiles->count(); j++) {
       auto profile = profiles->getProfile(j);
       stream_index_pair sip{profile->type(), 0};
-      if (sensors_.find(sip) != sensors_.end()) {
-        continue;
+      if (sensors_.find(sip) == sensors_.end()) {
+        sensors_[sip] = std::make_shared<ROSOBSensor>(device_, sensor, stream_name_[sip]);
       }
-      sensors_[sip] = std::make_shared<ROSOBSensor>(device_, sensor, stream_name_[sip]);
+      if (imu_sensor_.find(sip) == imu_sensor_.end()) {
+        imu_sensor_[sip] = sensor;
+      }
     }
   }
   for (const auto& item : enable_stream_) {
@@ -77,16 +95,17 @@ void OBCameraNode::setupDevices() {
     if (!depth_work_mode_.empty()) {
       device_->switchDepthWorkMode(depth_work_mode_.c_str());
     }
-    if (sync_mode_ != OB_SYNC_MODE_CLOSE) {
-      OBDeviceSyncConfig sync_config;
+    if (sync_mode_ != OB_MULTI_DEVICE_SYNC_MODE_FREE_RUN) {
+      auto sync_config = device_->getMultiDeviceSyncConfig();
       sync_config.syncMode = sync_mode_;
-      sync_config.irTriggerSignalInDelay = ir_trigger_signal_in_delay_;
-      sync_config.rgbTriggerSignalInDelay = rgb_trigger_signal_in_delay_;
-      sync_config.deviceTriggerSignalOutDelay = device_trigger_signal_out_delay_;
-      device_->setSyncConfig(sync_config);
+      sync_config.depthDelayUs = depth_delay_us_;
+      sync_config.colorDelayUs = color_delay_us_;
+      sync_config.trigger2ImageDelayUs = trigger2image_delay_us_;
+      sync_config.triggerOutDelayUs = trigger_out_delay_us_;
+      sync_config.triggerOutEnable = trigger_out_enabled_;
+      device_->setMultiDeviceSyncConfig(sync_config);
       if (device_->isPropertySupported(OB_PROP_SYNC_SIGNAL_TRIGGER_OUT_BOOL,
                                        OB_PERMISSION_READ_WRITE)) {
-        device_->setBoolProperty(OB_PROP_SYNC_SIGNAL_TRIGGER_OUT_BOOL, sync_signal_trigger_out_);
       }
     }
     if (device_info_->pid() == GEMINI2_PID) {
@@ -166,10 +185,9 @@ void OBCameraNode::setupProfiles() {
         width_[stream_index], height_[stream_index], format_[stream_index]);
     if (!selected_profile) {
       ROS_WARN_STREAM("Given stream configuration is not supported by the device! "
-                      << " Stream: " << stream_index.first << ", Stream Index: "
-                      << stream_index.second << ", Width: " << width_[stream_index]
-                      << ", Height: " << height_[stream_index] << ", FPS: " << fps_[stream_index]
-                      << ", Format: " << format_[stream_index]);
+                      << " Stream: " << stream_name_[stream_index] << ", Width: "
+                      << width_[stream_index] << ", Height: " << height_[stream_index]
+                      << ", FPS: " << fps_[stream_index] << ", Format: " << format_[stream_index]);
       if (default_profile) {
         ROS_WARN_STREAM("Using default profile instead.");
         ROS_WARN_STREAM("default FPS " << default_profile->fps());
@@ -188,7 +206,7 @@ void OBCameraNode::setupProfiles() {
     ROS_INFO_STREAM(" stream " << stream_name_[stream_index] << " is enabled - width: "
                                << width_[stream_index] << ", height: " << height_[stream_index]
                                << ", fps: " << fps_[stream_index] << ", "
-                               << "Format: " << selected_profile->format());
+                               << "Format: " << OBFormatToString(format_[stream_index]));
   }
   if (!enable_pipeline_ && (depth_registration_ || enable_colored_point_cloud_)) {
     int index = getCameraParamIndex();
@@ -222,11 +240,8 @@ void OBCameraNode::setupPublishers() {
     image_publishers_[stream_index] = nh_.advertise<sensor_msgs::Image>(
         topic_name, 1, image_subscribed_cb, image_unsubscribed_cb);
     topic_name = "/" + camera_name_ + "/" + name + "/camera_info";
-    camera_info_publishers_[stream_index] =
-        nh_.advertise<sensor_msgs::CameraInfo>(topic_name, 1, true);
-  }
-  if (enable_stream_[DEPTH] && enable_stream_[COLOR]) {
-    // extrinsics_publisher_ = nh_.advertise<Extrinsics>("extrinsic/depth_to_color", 1, true);
+    camera_info_publishers_[stream_index] = nh_.advertise<sensor_msgs::CameraInfo>(
+        topic_name, 1, image_subscribed_cb, image_unsubscribed_cb);
   }
   if (enable_point_cloud_) {
     ros::SubscriberStatusCallback depth_cloud_subscribed_cb =
@@ -245,19 +260,29 @@ void OBCameraNode::setupPublishers() {
         "depth_registered/points", 1, depth_registered_cloud_subscribed_cb,
         depth_registered_cloud_unsubscribed_cb);
   }
+  for (const auto& stream_index : HID_STREAMS) {
+    if (!enable_stream_[stream_index]) {
+      continue;
+    }
+    std::string topic_name = stream_name_[stream_index] + "/sample";
+    ros::SubscriberStatusCallback imu_subscribed_cb =
+        boost::bind(&OBCameraNode::imuSubscribedCallback, this, stream_index);
+    ros::SubscriberStatusCallback imu_unsubscribed_cb =
+        boost::bind(&OBCameraNode::imuUnsubscribedCallback, this, stream_index);
+    imu_publishers_[stream_index] =
+        nh_.advertise<sensor_msgs::Imu>(topic_name, 1, imu_subscribed_cb, imu_unsubscribed_cb);
+  }
 }
 
 void OBCameraNode::setupCameraInfo() {
   auto param = getCameraParam();
   if (param) {
-    int base_depth_width = param->depthIntrinsic.width == 0 ? 640 : param->depthIntrinsic.width;
-    int base_rgb_width = param->rgbIntrinsic.width == 0 ? 640 : param->rgbIntrinsic.width;
-    camera_infos_[DEPTH] =
-        convertToCameraInfo(param->depthIntrinsic, param->depthDistortion, base_depth_width);
-    camera_infos_[INFRA0] =
-        convertToCameraInfo(param->depthIntrinsic, param->depthDistortion, base_depth_width);
+    camera_infos_[DEPTH] = convertToCameraInfo(param->depthIntrinsic, param->depthDistortion,
+                                               param->depthIntrinsic.width);
+    camera_infos_[INFRA0] = convertToCameraInfo(param->depthIntrinsic, param->depthDistortion,
+                                                param->depthIntrinsic.width);
     camera_infos_[COLOR] =
-        convertToCameraInfo(param->rgbIntrinsic, param->rgbDistortion, base_rgb_width);
+        convertToCameraInfo(param->rgbIntrinsic, param->rgbDistortion, param->rgbIntrinsic.width);
   } else {
     ROS_WARN_STREAM("Failed to get camera parameters");
   }
@@ -269,7 +294,13 @@ void OBCameraNode::setupPipelineConfig() {
   }
   pipeline_config_ = std::make_shared<ob::Config>();
   if (depth_registration_ && enable_stream_[COLOR] && enable_stream_[DEPTH]) {
-    pipeline_config_->setAlignMode(ALIGN_D2C_HW_MODE);
+    if (device_info_->pid() == FEMTO_BOLT_PID) {
+      ROS_INFO_STREAM("set align mode:  ALIGN_D2C_SW_MODE");
+      pipeline_config_->setAlignMode(ALIGN_D2C_SW_MODE);
+    }else {
+      ROS_INFO_STREAM("set align mode:  ALIGN_D2C_HW_MODE");
+      pipeline_config_->setAlignMode(ALIGN_D2C_HW_MODE);
+    }
   }
   for (const auto& stream_index : IMAGE_STREAMS) {
     if (enable_stream_[stream_index]) {

@@ -1,3 +1,19 @@
+/*******************************************************************************
+ * Copyright (c) 2023 Orbbec 3D Technology, Inc
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *******************************************************************************/
+
 #include "orbbec_camera/ros_sensor.h"
 #include "ros/ros.h"
 
@@ -39,11 +55,13 @@ int ROSOBSensor::getExposure() {
     case OB_SENSOR_COLOR:
       data = device_->getIntProperty(OB_PROP_COLOR_EXPOSURE_INT);
       break;
+    case OB_SENSOR_IR_LEFT:
+    case OB_SENSOR_IR_RIGHT:
     case OB_SENSOR_IR:
       data = device_->getIntProperty(OB_PROP_IR_EXPOSURE_INT);
       break;
     default:
-      ROS_ERROR_STREAM(name_ << " does not support get exposure");
+      ROS_INFO_STREAM(name_ << " does not support get exposure");
       break;
   }
   return data;
@@ -57,11 +75,13 @@ void ROSOBSensor::setExposure(int data) {
     case OB_SENSOR_COLOR:
       device_->setIntProperty(OB_PROP_COLOR_EXPOSURE_INT, data);
       break;
+    case OB_SENSOR_IR_LEFT:
+    case OB_SENSOR_IR_RIGHT:
     case OB_SENSOR_IR:
       device_->setIntProperty(OB_PROP_IR_EXPOSURE_INT, data);
       break;
     default:
-      ROS_ERROR_STREAM(name_ << " does not support set exposure");
+      ROS_INFO_STREAM(name_ << " does not support set exposure");
       break;
   }
 }
@@ -72,6 +92,8 @@ int ROSOBSensor::getGain() {
     case OB_SENSOR_DEPTH:
       data = device_->getIntProperty(OB_PROP_DEPTH_GAIN_INT);
       break;
+    case OB_SENSOR_IR_LEFT:
+    case OB_SENSOR_IR_RIGHT:
     case OB_SENSOR_IR:
       data = device_->getIntProperty(OB_PROP_IR_GAIN_INT);
       break;
@@ -79,7 +101,7 @@ int ROSOBSensor::getGain() {
       data = device_->getIntProperty(OB_PROP_COLOR_GAIN_INT);
       break;
     default:
-      ROS_ERROR_STREAM(name_ << " does not support get gain");
+      ROS_INFO_STREAM(name_ << " does not support get gain");
       break;
   }
   return data;
@@ -90,6 +112,8 @@ void ROSOBSensor::setGain(int data) {
     case OB_SENSOR_DEPTH:
       device_->setIntProperty(OB_PROP_DEPTH_GAIN_INT, data);
       break;
+    case OB_SENSOR_IR_LEFT:
+    case OB_SENSOR_IR_RIGHT:
     case OB_SENSOR_IR:
       device_->setIntProperty(OB_PROP_IR_GAIN_INT, data);
       break;
@@ -97,7 +121,7 @@ void ROSOBSensor::setGain(int data) {
       device_->setIntProperty(OB_PROP_COLOR_GAIN_INT, data);
       break;
     default:
-      ROS_ERROR_STREAM(name_ << " does not support set gain");
+      ROS_INFO_STREAM(name_ << " does not support set gain");
       break;
   }
 }
@@ -143,6 +167,8 @@ void ROSOBSensor::setAutoExposure(bool data) {
     case OB_SENSOR_DEPTH:
       device_->setBoolProperty(OB_PROP_DEPTH_AUTO_EXPOSURE_BOOL, data);
       break;
+    case OB_SENSOR_IR_LEFT:
+    case OB_SENSOR_IR_RIGHT:
     case OB_SENSOR_IR:
       device_->setBoolProperty(OB_PROP_IR_AUTO_EXPOSURE_BOOL, data);
       break;
@@ -161,6 +187,8 @@ bool ROSOBSensor::getAutoExposure() {
     case OB_SENSOR_DEPTH:
       data = device_->getBoolProperty(OB_PROP_DEPTH_AUTO_EXPOSURE_BOOL);
       break;
+    case OB_SENSOR_IR_LEFT:
+    case OB_SENSOR_IR_RIGHT:
     case OB_SENSOR_IR:
       data = device_->getBoolProperty(OB_PROP_IR_AUTO_EXPOSURE_BOOL);
       break;
@@ -182,6 +210,10 @@ void ROSOBSensor::setMirror(bool data) {
     case OB_SENSOR_DEPTH:
       device_->setBoolProperty(OB_PROP_DEPTH_MIRROR_BOOL, data);
       break;
+    case OB_SENSOR_IR_RIGHT:
+      device_->setBoolProperty(OB_PROP_IR_RIGHT_MIRROR_BOOL, data);
+      break;
+    case OB_SENSOR_IR_LEFT:
     case OB_SENSOR_IR:
       device_->setBoolProperty(OB_PROP_IR_MIRROR_BOOL, data);
       break;
